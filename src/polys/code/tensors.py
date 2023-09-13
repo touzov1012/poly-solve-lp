@@ -103,3 +103,30 @@ def get_moment_operator(n, k_half, k_max=None, monomials=None, localizer=None):
     
     # return the localized operator
     return A
+
+def get_cone_un2(n):
+    '''
+    generate the cone of all diagonally dominant matrices, defined by
+    its extreme rays or product of all vectors uu^T where u is 0,-1,1
+    and at most two non-zero elements.
+    '''
+    
+    def fill(k, i, j):
+        
+        # which cell are we working on
+        ci = k % n
+        cj = k // n
+        
+        # only consider cells we are currently on, its symmetric part, or if we are on the diagonal
+        # and the diagonal corresponds to the row or column of the cell we are on
+        return np.where(
+            ((i == ci) & (j == cj)) | ((j == ci) & (i == cj)) | ((i == j) & (((j == ci) | (j == cj)))), 
+            np.where(
+                (ci < cj) | (i == j),
+                1,
+                -1,
+            ),
+            0
+        )
+    
+    return np.fromfunction(fill, (n**2, n, n))
