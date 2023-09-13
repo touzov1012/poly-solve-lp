@@ -44,10 +44,29 @@ class Model:
         
         self.model.setObjective(gp.quicksum([coef[i] * self.vars_x[i] for i in range(len(self.monomials))]), gp.GRB.MINIMIZE)
     
-    def optimize(self, max_steps):
+    def __optimize_and_feasible(self):
         
         # initial optimization
         self.model.optimize()
+        
+        # if we have an infeasible start
+        if self.model.status != gp.GRB.Status.INF_OR_UNBD:
+            return
+
+        # we need to resolve to get dual rays
+        self.model.setParam('DualReductions', 0)
+
+        # Compute the IIS
+        self.model.computeIIS()
+
+        # we need to resolve to get dual rays
+        self.model.setParam('DualReductions', 1)
+        
+    
+    def optimize(self, max_steps):
+        
+        # initial optimize
+        self.__optimize_and_feasible()
         
         # attempt the max number of steps
         for i in range(max_steps):
@@ -70,7 +89,7 @@ class Model:
             clear_output(wait=True)
             
             # reoptimize
-            self.model.optimize()
+            self.__optimize_and_feasible()
     
     def extend_cone(self, name, add_tensors=None):
         
