@@ -10,7 +10,7 @@ class Model:
     A wrapper for all the functionality to perform recursive polynomial optimization
     '''
     
-    def __init__(self, n, k_half, k_upper, socp=True, eigen_tol=0.0001):
+    def __init__(self, n, k_half, k_upper, socp=True, eigen_tol=1e-5):
         
         self.monomials = tensors.get_monomial_indices(n, k_upper)
         self.k_half = k_half
@@ -21,7 +21,7 @@ class Model:
         
         # create the model
         self.model = gp.Model("polynomial_program")
-        self.vars_x = self.model.addVars(len(self.monomials), name='x', lb=-gp.GRB.INFINITY)
+        self.vars_x = self.model.addMVar(len(self.monomials), name='x', lb=-gp.GRB.INFINITY)
         
         # set the constant
         self.model.addConstr(self.vars_x[0] == 1, name='constant')
@@ -48,7 +48,7 @@ class Model:
         for p in polynomial:
             coef[self.monomials[tuple(p[1])]] = p[0]
         
-        self.model.setObjective(gp.quicksum([coef[i] * self.vars_x[i] for i in range(len(self.monomials))]), gp.GRB.MINIMIZE)
+        self.model.setObjective(coef @ self.vars_x, gp.GRB.MINIMIZE)
     
     def __optimize_and_feasible(self):
         
@@ -115,8 +115,7 @@ class Model:
             return
         
         # remove old constraint
-        for value in values[1].values():
-            self.model.remove(value)
+        self.model.remove(values[1])
             
         # get cached cone props
         Ax = values[0]
@@ -126,7 +125,7 @@ class Model:
         # the SDD cone is used for an SOCP
         an = len(add_tensors)
         if not socp:
-            y = self.model.addVars(an)
+            y = self.model.addMVar(an)
         
             # extend the cone
             Dy = values[2] + gp.quicksum(add_tensors[i] * y[i] for i in range(an))
@@ -143,10 +142,7 @@ class Model:
             Dy = values[2] + gp.quicksum(add_tensors[i] @ y[i,:,:] @ add_tensors[i].T for i in range(an))
         
         # set equality of Ax with z, our semidefinite vector
-        Z = {}
-        for i in range(self.width):
-            for j in range(self.width):
-                Z[(i,j)] = self.model.addConstr(Ax[i,j] == Dy[i,j], name=f'{name}_Ax_({i},{j})=Dy_({i},{j})')
+        Z = self.model.addConstr(Ax == Dy, name=f'{name}_Ax=Dy')
         
         # update the dictionary
         self.cones[name] = (Ax, Z, Dy, socp)
@@ -166,10 +162,7 @@ class Model:
 
         # if not an inequality
         if not inequality:
-            Z = {}
-            for i in range(self.width):
-                for j in range(self.width):
-                    Z[(i,j)] = self.model.addConstr(Ax[i,j] == 0, name=f'{name}_Ax_({i},{j})=0')
+            Z = self.model.addConstr(Ax == 0, name=f'{name}_Ax=0')
             
             self.cones[name] = (Ax, Z, None, None)
             
@@ -180,13 +173,16 @@ class Model:
         # the SDD cone is used for an SOCP
         if not socp:
             an = self.width*self.width
-            y = self.model.addVars(an, name='alpha')
+            y = self.model.addMVar(an, name='alpha')
 
             # starting cone
             D = tensors.get_cone_un2(self.width)
             Dy = gp.quicksum(D[i] * y[i] for i in range(an))
 
         else:
+            # we need duals
+            self.model.setParam('QCPDual', 1)
+            
             an = self.width * (self.width - 1) // 2
             y = self.model.addMVar((an, 2, 2), name='alpha', lb=-gp.GRB.INFINITY)
             
@@ -201,10 +197,7 @@ class Model:
             Dy = gp.quicksum(D[i] @ y[i] @ D[i].T for i in range(an))
             
         # set equality of Ax with z, our semidefinite vector
-        Z = {}
-        for i in range(self.width):
-            for j in range(self.width):
-                Z[(i,j)] = self.model.addConstr(Ax[i,j] == Dy[i,j], name=f'{name}_Ax_({i},{j})=Dy_({i},{j})')
+        Z = self.model.addConstr(Ax == Dy, name=f'{name}_Ax=Dy')
         
         # set the properties for this cone
         self.cones[name] = (Ax, Z, Dy, socp)
@@ -215,9 +208,8 @@ class Model:
         if self.cones[cone][2] is None:
             return None
         
-        Z = np.zeros((self.width, self.width))
-        for key, value in self.cones[cone][1].items():
-            Z[key] = value.Pi
+        # get the dual variable for the sdp constr
+        Z = self.cones[cone][1].Pi
         Z = (Z + Z.T) / 2
         
         # check if socp
