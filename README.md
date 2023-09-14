@@ -1,2 +1,2 @@
-# sdp-tricks
-A set of cool semidefinite program examples.
+# Polynomial Optimization Tricks
+A self study of applying SDP approximations to polynomial optimization.
