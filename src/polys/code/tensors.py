@@ -130,3 +130,31 @@ def get_cone_un2(n):
         )
     
     return np.fromfunction(fill, (n**2, n, n))
+
+def get_cone_vn2(n):
+    '''
+    generate the representative vectors for producing extreme rays of the cone
+    which is the outer product of these n x 2 dimensional vectors. Each of which
+    has a 1 in the j location of column 1 and the second has a 1 in the k > j
+    index of column 2. Everything else is 0.
+    '''
+    
+    def tx(x):
+        return x * (x+1) // 2
+    
+    def itx(y):
+        return 0.5 * (np.sqrt(np.maximum(8*y + 1, 0)) - 1)
+    
+    def fill(k, i, j):
+        
+        # which cell are we working on
+        c0 = np.floor(itx(k)) + 1
+        c1 = k - tx(c0-1)
+
+        return np.where(
+            ((i == n - 1 - c0) & (j == 0)) | ((i == n - 1 - c1) & (j == 1)), 
+            1,
+            0,
+        )
+    
+    return np.fromfunction(fill, (n*(n-1) // 2, n, 2))

@@ -10,12 +10,13 @@ class Model:
     A wrapper for all the functionality to perform recursive polynomial optimization
     '''
     
-    def __init__(self, n, k_half, k_upper, eigen_tol=0.0001):
+    def __init__(self, n, k_half, k_upper, socp=True, eigen_tol=0.0001):
         
         self.monomials = tensors.get_monomial_indices(n, k_upper)
         self.k_half = k_half
         self.k_upper = k_upper
         self.n = n
+        self.socp = socp
         self.eigen_tol = eigen_tol
         
         # create the model
@@ -31,8 +32,12 @@ class Model:
         # cones
         self.cones = dict()
         
+        # if socp we need qcp duals
+        if socp:
+            self.model.setParam('QCPDual', 1)
+        
         # add the identity cone for the moment sequence
-        self.add_cone('identity')
+        self.add_cone('identity', socp=socp)
     
     def set_objective(self, polynomial):
         
@@ -113,22 +118,40 @@ class Model:
         for value in values[1].values():
             self.model.remove(value)
             
-        # generators of the DD cone
-        y = self.model.addVars(len(add_tensors))
+        # get cached cone props
+        Ax = values[0]
+        socp = values[3]
         
-        # extend the cone
-        Dy = values[2] + gp.quicksum(add_tensors[i] * y[i] for i in range(len(add_tensors)))
+        # if we have LP we will build the DD cone, otherwise
+        # the SDD cone is used for an SOCP
+        an = len(add_tensors)
+        if not socp:
+            y = self.model.addVars(an)
+        
+            # extend the cone
+            Dy = values[2] + gp.quicksum(add_tensors[i] * y[i] for i in range(an))
+        else:
+            y = self.model.addMVar((an, 2, 2), lb=-gp.GRB.INFINITY)
+            
+            # psd constraint
+            self.model.addConstrs(y[k,0,0] >= 0 for k in range(an))
+            self.model.addConstrs(y[k,1,1] >= 0 for k in range(an))
+            self.model.addConstrs(y[k,1,0] == y[k,0,1] for k in range(an))
+            self.model.addConstrs(y[k,0,0] * y[k,1,1] >= y[k,0,1] * y[k,0,1] for k in range(an))
+            
+            # extend the cone
+            Dy = values[2] + gp.quicksum(add_tensors[i] @ y[i,:,:] @ add_tensors[i].T for i in range(an))
         
         # set equality of Ax with z, our semidefinite vector
         Z = {}
         for i in range(self.width):
             for j in range(self.width):
-                Z[(i,j)] = self.model.addConstr(values[0][i,j] == Dy[i,j], name=f'{name}_Ax_({i},{j})=Dy_({i},{j})')
+                Z[(i,j)] = self.model.addConstr(Ax[i,j] == Dy[i,j], name=f'{name}_Ax_({i},{j})=Dy_({i},{j})')
         
         # update the dictionary
-        self.cones[name] = (values[0], Z, Dy)
-    
-    def add_cone(self, name, localizer=None, inequality=True):
+        self.cones[name] = (Ax, Z, Dy, socp)
+        
+    def add_cone(self, name, localizer=None, inequality=True, socp=True):
         
         # get the constraints
         A = tensors.get_moment_operator(
@@ -148,18 +171,35 @@ class Model:
                 for j in range(self.width):
                     Z[(i,j)] = self.model.addConstr(Ax[i,j] == 0, name=f'{name}_Ax_({i},{j})=0')
             
-            self.cones[name] = (Ax, Z, None)
+            self.cones[name] = (Ax, Z, None, None)
             
             # we do not need to create the generators
             return
         
-        # generators of the DD cone
-        y = self.model.addVars(self.width**2, name='alpha')
-        
-        # starting cone
-        D = tensors.get_cone_un2(self.width)
-        Dy = gp.quicksum(D[i] * y[i] for i in range(self.width**2))
+        # if we have LP we will build the DD cone, otherwise
+        # the SDD cone is used for an SOCP
+        if not socp:
+            an = self.width*self.width
+            y = self.model.addVars(an, name='alpha')
 
+            # starting cone
+            D = tensors.get_cone_un2(self.width)
+            Dy = gp.quicksum(D[i] * y[i] for i in range(an))
+
+        else:
+            an = self.width * (self.width - 1) // 2
+            y = self.model.addMVar((an, 2, 2), name='alpha', lb=-gp.GRB.INFINITY)
+            
+            # psd constraint
+            self.model.addConstrs(y[k,0,0] >= 0 for k in range(an))
+            self.model.addConstrs(y[k,1,1] >= 0 for k in range(an))
+            self.model.addConstrs(y[k,1,0] == y[k,0,1] for k in range(an))
+            self.model.addConstrs(y[k,0,0] * y[k,1,1] >= y[k,0,1] * y[k,0,1] for k in range(an))
+            
+            # starting cone
+            D = tensors.get_cone_vn2(self.width)
+            Dy = gp.quicksum(D[i] @ y[i] @ D[i].T for i in range(an))
+            
         # set equality of Ax with z, our semidefinite vector
         Z = {}
         for i in range(self.width):
@@ -167,7 +207,7 @@ class Model:
                 Z[(i,j)] = self.model.addConstr(Ax[i,j] == Dy[i,j], name=f'{name}_Ax_({i},{j})=Dy_({i},{j})')
         
         # set the properties for this cone
-        self.cones[name] = (Ax, Z, Dy)
+        self.cones[name] = (Ax, Z, Dy, socp)
     
     def get_violation_ray(self, cone):
         
@@ -180,12 +220,21 @@ class Model:
             Z[key] = value.Pi
         Z = (Z + Z.T) / 2
         
-        # get the largest negative eigenvector
+        # check if socp
+        socp = self.cones[cone][3]
+        
+        # compute the violation dual eigenvectors
+        # and check if the violation is severe enough
         eig = np.linalg.eigh(Z)
         ev = eig[0][0]
-        v = eig[1][:,0]
         
         if ev >= -self.eigen_tol:
             return None
         
-        return np.outer(v, v)
+        if not socp:
+            # get the largest negative eigenvector
+            v = eig[1][:,0]
+            return np.outer(v, v)
+        else:
+            # get the two largest negative eigenvectors
+            return eig[1][:,:2]
