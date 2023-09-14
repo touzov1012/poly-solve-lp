@@ -10,12 +10,13 @@ class Model:
     A wrapper for all the functionality to perform recursive polynomial optimization
     '''
     
-    def __init__(self, n, k_half, k_upper):
+    def __init__(self, n, k_half, k_upper, eigen_tol=0.0001):
         
         self.monomials = tensors.get_monomial_indices(n, k_upper)
         self.k_half = k_half
         self.k_upper = k_upper
         self.n = n
+        self.eigen_tol = eigen_tol
         
         # create the model
         self.model = gp.Model("polynomial_program")
@@ -184,7 +185,7 @@ class Model:
         ev = eig[0][0]
         v = eig[1][:,0]
         
-        if ev >= 0:
+        if ev >= -self.eigen_tol:
             return None
         
         return np.outer(v, v)
