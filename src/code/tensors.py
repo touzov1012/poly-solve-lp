@@ -54,7 +54,7 @@ def get_localized(full_mono_lookup, pairwise_sums):
 def get_moment_operator(n, k_half, k_max=None, monomials=None, localizer=None):
     '''
     create the moment operator with optional localizer polynomial provided
-    as a list of (coef, (powers))
+    as a list of (coef, [powers]))
     
     n:           the number of variables
     k_half:      the dictator of the base polynomial domain to consider, without

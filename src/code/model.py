@@ -10,7 +10,16 @@ class Model:
     A wrapper for all the functionality to perform recursive polynomial optimization
     '''
     
-    def __init__(self, n, k_half, k_upper, socp=True, eigen_tol=1e-5):
+    def __init__(self, n, k_half, k_upper, socp=True, eigen_tol=1e-6):
+        '''
+        The constructor.
+        
+        n:           the number of variables
+        k_half:      half the full required polynomial degree
+        k_upper:     and upper bound on the maximum degree we will need to optimize
+        socp:        should we use SOCP or LP relaxations
+        eigen_tol:   the tolerance on violation of the SDP cone
+        '''
         
         self.monomials = tensors.get_monomial_indices(n, k_upper)
         self.k_half = k_half
@@ -40,6 +49,11 @@ class Model:
         self.add_cone('identity', socp=socp)
     
     def set_objective(self, polynomial):
+        '''
+        Set the objective function.
+        
+        polynomial:   a list of (coef., [monomial])
+        '''
         
         # get the coef vector
         coef = np.zeros(len(self.monomials))
@@ -51,6 +65,9 @@ class Model:
         self.model.setObjective(coef @ self.vars_x, gp.GRB.MINIMIZE)
     
     def __optimize_and_feasible(self):
+        '''
+        We optimize, and if infeasible, we find an infeasible subsystem.
+        '''
         
         # initial optimization
         self.model.optimize()
@@ -70,6 +87,11 @@ class Model:
         
     
     def optimize(self, max_steps):
+        '''
+        Run the optimizer.
+        
+        max_steps:   the maximum number of columns we will generate
+        '''
         
         # initial optimize
         self.__optimize_and_feasible()
@@ -98,6 +120,9 @@ class Model:
             self.__optimize_and_feasible()
     
     def extend_cone(self, name, add_tensors=None):
+        '''
+        Extend an SDP cone approximation with a new extreme vector.
+        '''
         
         # add to the cone generators if needed
         if add_tensors is None:
@@ -148,6 +173,14 @@ class Model:
         self.cones[name] = (Ax, Z, Dy, socp)
         
     def add_cone(self, name, localizer=None, inequality=True, socp=True):
+        '''
+        Add a new moment cone approximation.
+        
+        name:         the name of the constraint
+        localizer:    the localizing polynomial specified as in objective
+        inequality:   is this an inequality or equality
+        socp:         should we use the socp or lp generation
+        '''
         
         # get the constraints
         A = tensors.get_moment_operator(
@@ -203,6 +236,12 @@ class Model:
         self.cones[name] = (Ax, Z, Dy, socp)
     
     def get_violation_ray(self, cone):
+        '''
+        After solving, find a dual ray which violates the SDP requirement
+        of a moment cone.
+        
+        cone:   the name of the cone
+        '''
         
         # if we have a zero cone we dont need to extend it
         if self.cones[cone][2] is None:
