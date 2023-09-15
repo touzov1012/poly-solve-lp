@@ -1,4 +1,5 @@
 from code import tensors
+from code import plot as plt
 
 import gurobipy as gp
 import numpy as np
@@ -10,7 +11,7 @@ class Model:
     A wrapper for all the functionality to perform recursive polynomial optimization
     '''
     
-    def __init__(self, n, k_half, k_upper, socp=True, eigen_tol=1e-6):
+    def __init__(self, n, k_half, k_upper, socp=False, eigen_tol=1e-6):
         '''
         The constructor.
         
@@ -27,6 +28,8 @@ class Model:
         self.n = n
         self.socp = socp
         self.eigen_tol = eigen_tol
+        self.optimized = False
+        self.constraints = []
         
         # create the model
         self.model = gp.Model("polynomial_program")
@@ -54,6 +57,8 @@ class Model:
         
         polynomial:   a list of (coef., [monomial])
         '''
+        
+        self.objective = polynomial
         
         # get the coef vector
         coef = np.zeros(len(self.monomials))
@@ -92,6 +97,9 @@ class Model:
         
         max_steps:   the maximum number of columns we will generate
         '''
+        
+        # turn on this flag for plotting
+        self.optimized = True
         
         # initial optimize
         self.__optimize_and_feasible()
@@ -172,7 +180,7 @@ class Model:
         # update the dictionary
         self.cones[name] = (Ax, Z, Dy, socp)
         
-    def add_cone(self, name, localizer=None, inequality=True, socp=True):
+    def add_cone(self, name, localizer=None, inequality=True, socp=False):
         '''
         Add a new moment cone approximation.
         
@@ -181,6 +189,10 @@ class Model:
         inequality:   is this an inequality or equality
         socp:         should we use the socp or lp generation
         '''
+        
+        # add constraint
+        if localizer is not None:
+            self.constraints.append(localizer)
         
         # get the constraints
         A = tensors.get_moment_operator(
@@ -269,3 +281,31 @@ class Model:
         else:
             # get the two largest negative eigenvectors
             return eig[1][:,:2]
+    
+    def plot(self, bounds):
+        '''
+        Plot the objective function and optimizer
+        
+        bounds:   the bounds of the domain
+        '''
+        
+        if not hasattr(self, 'objective'):
+            return
+        
+        if self.n >= 3:
+            print('3D plot not supported.')
+            return
+        
+        soln = None if not self.optimized else self.get_solution()
+        
+        if self.n == 1:
+            plt.plot_1d(self.objective, bounds, point=soln, constraints=self.constraints)
+    
+    def get_solution(self):
+        '''
+        Get the optimal solution
+        '''
+        
+        inds = [value for key, value in self.monomials.items() if sum(key) == 1]
+        
+        return np.flip([self.vars_x[idx].X for idx in inds])
